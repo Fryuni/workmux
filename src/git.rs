@@ -112,6 +112,8 @@ pub fn create_worktree(worktree_path: &Path, branch_name: &str, create_branch: b
 
 /// Remove a git worktree
 pub fn remove_worktree(branch_name: &str, force: bool) -> Result<()> {
+    // Run from main worktree root to avoid issues when removing from within a worktree
+    let main_worktree_root = get_main_worktree_root()?;
     let worktree_path = get_worktree_path(branch_name)?;
 
     let path_str = worktree_path.to_str().ok_or_else(|| {
@@ -121,7 +123,10 @@ pub fn remove_worktree(branch_name: &str, force: bool) -> Result<()> {
         )
     })?;
 
-    let mut cmd = Cmd::new("git").arg("worktree").arg("remove");
+    let mut cmd = Cmd::new("git")
+        .workdir(&main_worktree_root)
+        .arg("worktree")
+        .arg("remove");
     if force {
         cmd = cmd.arg("--force");
     }
@@ -284,6 +289,22 @@ pub fn merge_in_worktree(worktree_path: &Path, branch_name: &str) -> Result<()> 
         .args(&["merge", branch_name])
         .run()
         .context("Failed to merge")?;
+    Ok(())
+}
+
+/// Switch to a different branch in a specific worktree
+pub fn switch_branch_in_worktree(worktree_path: &Path, branch_name: &str) -> Result<()> {
+    Cmd::new("git")
+        .workdir(worktree_path)
+        .args(&["switch", branch_name])
+        .run()
+        .with_context(|| {
+            format!(
+                "Failed to switch to branch '{}' in worktree '{}'",
+                branch_name,
+                worktree_path.display()
+            )
+        })?;
     Ok(())
 }
 

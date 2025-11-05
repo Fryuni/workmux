@@ -317,23 +317,25 @@ pub fn merge(
         git::get_current_branch().context("Failed to get current branch")?
     };
 
-    // Get worktree path and check for uncommitted changes
+    // Get worktree path for the branch to be merged
     let worktree_path = git::get_worktree_path(&branch_to_merge)
         .with_context(|| format!("No worktree found for branch '{}'", branch_to_merge))?;
 
-    // Check for unstaged changes - error unless ignore_uncommitted flag is used
+    // Handle changes in the source worktree
     if git::has_unstaged_changes(&worktree_path)? && !ignore_uncommitted {
         return Err(anyhow!(
-            "Worktree has unstaged changes. Please stage them with 'git add' or stash them first, or use --ignore-uncommitted to ignore."
+            "Worktree for '{}' has unstaged changes. Please stage or stash them, or use --ignore-uncommitted.",
+            branch_to_merge
         ));
     }
 
-    // Check for staged changes - will need to commit (only if not using ignore_uncommitted)
     let had_staged_changes = git::has_staged_changes(&worktree_path)?;
     if had_staged_changes && !ignore_uncommitted {
         // Commit using git's editor (respects $EDITOR or git config)
         git::commit_with_editor(&worktree_path).context("Failed to commit staged changes")?;
     }
+
+    // --- Start of hardened merge logic ---
 
     // Get the main branch (from config or auto-detect)
     let main_branch = config
@@ -341,15 +343,31 @@ pub fn merge(
         .as_ref()
         .map(|s| Ok(s.clone()))
         .unwrap_or_else(git::get_default_branch)
-        .context("Failed to determine the main branch. You can specify it in .workmux.toml")?;
+        .context("Failed to determine the main branch. Specify it in .workmux.toml")?;
 
-    // Get the main worktree path - need to operate there instead of switching branches
+    if branch_to_merge == main_branch {
+        return Err(anyhow!("Cannot merge the main branch into itself."));
+    }
+
+    // Get the main worktree path. This is the canonical, non-linked worktree.
     let main_worktree_path =
-        git::get_worktree_path(&main_branch).context("Failed to find main branch worktree")?;
+        git::get_main_worktree_root().context("Failed to find the main worktree")?;
+
+    // Safety check: Abort if the main worktree has uncommitted changes
+    if git::has_uncommitted_changes(&main_worktree_path)? {
+        return Err(anyhow!(
+            "Main worktree has uncommitted changes. Please commit or stash them before merging."
+        ));
+    }
+
+    // Explicitly switch to the main branch to ensure correct merge target
+    git::switch_branch_in_worktree(&main_worktree_path, &main_branch)?;
 
     // Merge the branch into main (in the main worktree)
     git::merge_in_worktree(&main_worktree_path, &branch_to_merge)
         .context("Failed to merge branch")?;
+
+    // --- End of hardened merge logic ---
 
     // Always force cleanup after a successful merge
     let prefix = config.window_prefix();
