@@ -343,7 +343,7 @@ pub fn merge(
         .as_ref()
         .map(|s| Ok(s.clone()))
         .unwrap_or_else(git::get_default_branch)
-        .context("Failed to determine the main branch. Specify it in .workmux.toml")?;
+        .context("Failed to determine the main branch. Specify it in .workmux.yaml")?;
 
     if branch_to_merge == main_branch {
         return Err(anyhow!("Cannot merge the main branch into itself."));
@@ -422,7 +422,7 @@ pub fn remove(
 
     // Safety Check: Prevent deleting the main branch
     let main_branch = git::get_default_branch()
-        .context("Failed to determine the main branch. You can specify it in .workmux.toml")?;
+        .context("Failed to determine the main branch. You can specify it in .workmux.yaml")?;
     if branch_name == main_branch {
         return Err(anyhow!("Cannot delete the main branch ('{}')", main_branch));
     }

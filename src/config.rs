@@ -16,7 +16,7 @@ pub struct FileConfig {
     pub symlink: Vec<String>,
 }
 
-/// Configuration for the workmux tool, read from .workmux.toml
+/// Configuration for the workmux tool, read from .workmux.yaml
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     /// The primary branch to merge into (optional, auto-detected if not set)

@@ -66,7 +66,7 @@ pub fn get_default_branch() -> Result<String> {
     // No default branch could be determined - require explicit configuration
     Err(anyhow!(
         "Could not determine the default branch (e.g., 'main' or 'master'). \
-        Please specify it in .workmux.toml using the 'main_branch' key."
+        Please specify it in .workmux.yaml using the 'main_branch' key."
     ))
 }
 
