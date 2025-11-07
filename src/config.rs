@@ -164,44 +164,16 @@ impl Config {
             }
         }
 
-        // Helper for PaneConfig vectors
-        fn merge_panes(
-            global: Option<Vec<PaneConfig>>,
-            project: Option<Vec<PaneConfig>>,
-        ) -> Option<Vec<PaneConfig>> {
-            // For panes, we also support "<global>" placeholder in command field
-            match (global, project) {
-                (Some(global_panes), Some(project_panes)) => {
-                    // Check if any pane has command == "<global>"
-                    let has_placeholder = project_panes.iter().any(|p| p.command == "<global>");
-                    if has_placeholder {
-                        // Replace panes with command "<global>" with all global panes
-                        let mut result = Vec::new();
-                        for pane in project_panes {
-                            if pane.command == "<global>" {
-                                result.extend(global_panes.clone());
-                            } else {
-                                result.push(pane);
-                            }
-                        }
-                        Some(result)
-                    } else {
-                        // No placeholder, project replaces global
-                        Some(project_panes)
-                    }
-                }
-                (global, project) => project.or(global),
-            }
-        }
-
         Self {
             // Scalar values: project wins
             main_branch: project.main_branch.or(self.main_branch),
             worktree_dir: project.worktree_dir.or(self.worktree_dir),
             window_prefix: project.window_prefix.or(self.window_prefix),
 
+            // Panes: project replaces global (no placeholder support)
+            panes: project.panes.or(self.panes),
+
             // List values with placeholder support
-            panes: merge_panes(self.panes, project.panes),
             post_create: merge_vec_with_placeholder(self.post_create, project.post_create),
 
             // File config with placeholder support

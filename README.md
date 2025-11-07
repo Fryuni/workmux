@@ -76,7 +76,7 @@ workmux uses a two-level configuration system:
 - **Global** (`~/.config/workmux/config.yaml`): Personal defaults for all projects
 - **Project** (`.workmux.yaml`): Project-specific overrides
 
-Project settings override global settings. Use `"<global>"` in lists to inherit global values.
+Project settings override global settings. For `post_create` and file operation lists (`files.copy`, `files.symlink`), you can use `"<global>"` to include global values alongside project-specific ones. Other settings like `panes` are replaced entirely when defined in the project config.
 
 ### Global configuration example
 
