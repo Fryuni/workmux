@@ -1,9 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::{thread, time::Duration};
 
 use crate::{cmd, config, git, tmux};
+use tracing::{debug, info, trace, warn};
 
 /// Result of creating a worktree
 pub struct CreateResult {
@@ -45,6 +46,8 @@ pub fn create(
     base_branch: Option<&str>,
     config: &config::Config,
 ) -> Result<CreateResult> {
+    info!(branch = branch_name, base = ?base_branch, "create:start");
+
     // Pre-flight checks
     if !git::is_git_repo()? {
         return Err(anyhow!("Not in a git repository"));
@@ -75,6 +78,10 @@ pub fn create(
     // Auto-detect: create branch if it doesn't exist
     let branch_exists = git::branch_exists(branch_name)?;
     let create_new = !branch_exists;
+    debug!(
+        branch = branch_name,
+        branch_exists, create_new, "create:branch detection"
+    );
 
     // Determine the base for the new branch
     let base_branch_for_creation = if create_new {
@@ -122,6 +129,14 @@ pub fn create(
     let worktree_path = base_dir.join(branch_name);
 
     // Create worktree
+    info!(
+        branch = branch_name,
+        path = %worktree_path.display(),
+        create_new,
+        base = ?base_branch_for_creation,
+        "create:creating worktree"
+    );
+
     git::create_worktree(
         &worktree_path,
         branch_name,
@@ -135,7 +150,14 @@ pub fn create(
         run_hooks: true,
         force_files: true,
     };
-    setup_environment(branch_name, &worktree_path, config, &options)
+    let result = setup_environment(branch_name, &worktree_path, config, &options)?;
+    info!(
+        branch = branch_name,
+        path = %result.worktree_path.display(),
+        hooks_run = result.post_create_hooks_run,
+        "create:completed"
+    );
+    Ok(result)
 }
 
 /// Open a tmux window for an existing worktree
@@ -145,6 +167,7 @@ pub fn open(
     force_files: bool,
     config: &config::Config,
 ) -> Result<CreateResult> {
+    info!(branch = branch_name, run_hooks, force_files, "open:start");
     // Pre-flight checks
     if !git::is_git_repo()? {
         return Err(anyhow!("Not in a git repository"));
@@ -160,7 +183,8 @@ pub fn open(
     if tmux::window_exists(prefix, branch_name)? {
         return Err(anyhow!(
             "A tmux window named '{}' already exists. To switch to it, run: tmux select-window -t '{}'",
-            branch_name, tmux::prefixed(prefix, branch_name)
+            branch_name,
+            tmux::prefixed(prefix, branch_name)
         ));
     }
 
@@ -177,7 +201,14 @@ pub fn open(
         run_hooks,
         force_files,
     };
-    setup_environment(branch_name, &worktree_path, config, &options)
+    let result = setup_environment(branch_name, &worktree_path, config, &options)?;
+    info!(
+        branch = branch_name,
+        path = %result.worktree_path.display(),
+        hooks_run = result.post_create_hooks_run,
+        "open:completed"
+    );
+    Ok(result)
 }
 
 /// Sets up the tmux window, files, and hooks for a worktree.
@@ -188,48 +219,73 @@ fn setup_environment(
     config: &config::Config,
     options: &SetupOptions,
 ) -> Result<CreateResult> {
+    debug!(
+        branch = branch_name,
+        path = %worktree_path.display(),
+        run_hooks = options.run_hooks,
+        force_files = options.force_files,
+        "setup_environment:start"
+    );
     let prefix = config.window_prefix();
     let repo_root = git::get_repo_root()?;
 
     // Create tmux window
     tmux::create_window(prefix, branch_name, worktree_path)
         .context("Failed to create tmux window")?;
+    info!(
+        branch = branch_name,
+        "setup_environment:tmux window created"
+    );
 
     // Perform file operations (copy and symlink) if forced
     if options.force_files {
         handle_file_operations(&repo_root, worktree_path, &config.files)
             .context("Failed to perform file operations")?;
+        debug!(
+            branch = branch_name,
+            "setup_environment:file operations applied"
+        );
     }
 
     // Run post-create hooks if enabled
     let mut hooks_run = 0;
-    if options.run_hooks {
-        if let Some(post_create) = &config.post_create {
-            if !post_create.is_empty() {
-                // Print detection message for pnpm projects
-                if repo_root.join("pnpm-lock.yaml").exists()
-                    && post_create
-                        .iter()
-                        .any(|cmd| cmd.starts_with("pnpm install"))
-                {
-                    println!("  Detected pnpm project, installing dependencies...");
-                }
-
-                hooks_run = post_create.len();
-                for (idx, command) in post_create.iter().enumerate() {
-                    println!("  [{}/{}] Running: {}", idx + 1, hooks_run, command);
-                    cmd::shell_command(command, worktree_path).with_context(|| {
-                        format!("Failed to run post-create command: '{}'", command)
-                    })?;
-                }
-            }
+    if options.run_hooks
+        && let Some(post_create) = &config.post_create
+        && !post_create.is_empty()
+    {
+        // Print detection message for pnpm projects
+        if repo_root.join("pnpm-lock.yaml").exists()
+            && post_create
+                .iter()
+                .any(|cmd| cmd.starts_with("pnpm install"))
+        {
+            println!("  Detected pnpm project, installing dependencies...");
         }
+
+        hooks_run = post_create.len();
+        for (idx, command) in post_create.iter().enumerate() {
+            info!(branch = branch_name, step = idx + 1, total = hooks_run, command = %command, "setup_environment:hook start");
+            println!("  [{}/{}] Running: {}", idx + 1, hooks_run, command);
+            cmd::shell_command(command, worktree_path)
+                .with_context(|| format!("Failed to run post-create command: '{}'", command))?;
+            info!(branch = branch_name, step = idx + 1, total = hooks_run, command = %command, "setup_environment:hook complete");
+        }
+        info!(
+            branch = branch_name,
+            total = hooks_run,
+            "setup_environment:hooks complete"
+        );
     }
 
     // Setup panes
     let panes = config.panes.as_deref().unwrap_or(&[]);
     let pane_setup_result = tmux::setup_panes(prefix, branch_name, panes, worktree_path)
         .context("Failed to setup panes")?;
+    debug!(
+        branch = branch_name,
+        focus_index = pane_setup_result.focus_pane_index,
+        "setup_environment:panes configured"
+    );
 
     // Focus the configured pane
     tmux::select_pane(prefix, branch_name, pane_setup_result.focus_pane_index)?;
@@ -250,6 +306,13 @@ fn handle_file_operations(
     worktree_path: &Path,
     file_config: &config::FileConfig,
 ) -> Result<()> {
+    debug!(
+        repo = %repo_root.display(),
+        worktree = %worktree_path.display(),
+        copy_patterns = file_config.copy.as_ref().map(|v| v.len()).unwrap_or(0),
+        symlink_patterns = file_config.symlink.as_ref().map(|v| v.len()).unwrap_or(0),
+        "file_operations:start"
+    );
     // Handle copies
     if let Some(copy_patterns) = &file_config.copy {
         for pattern in copy_patterns {
@@ -274,6 +337,11 @@ fn handle_file_operations(
                 fs::copy(&source_path, &dest_path).with_context(|| {
                     format!("Failed to copy {:?} to {:?}", source_path, dest_path)
                 })?;
+                trace!(
+                    from = %source_path.display(),
+                    to = %dest_path.display(),
+                    "file_operations:copied"
+                );
             }
         }
     }
@@ -341,6 +409,11 @@ fn handle_file_operations(
                         )
                     })?;
                 }
+                trace!(
+                    from = %relative_source.display(),
+                    to = %dest_path.display(),
+                    "file_operations:symlinked"
+                );
             }
         }
     }
@@ -357,6 +430,14 @@ pub fn merge(
     squash: bool,
     config: &config::Config,
 ) -> Result<MergeResult> {
+    info!(
+        branch = ?branch_name,
+        ignore_uncommitted,
+        delete_remote,
+        rebase,
+        squash,
+        "merge:start"
+    );
     // Pre-flight checks
     if !git::is_git_repo()? {
         return Err(anyhow!("Not in a git repository"));
@@ -373,6 +454,11 @@ pub fn merge(
     // Get worktree path for the branch to be merged
     let worktree_path = git::get_worktree_path(&branch_to_merge)
         .with_context(|| format!("No worktree found for branch '{}'", branch_to_merge))?;
+    debug!(
+        branch = branch_to_merge,
+        path = %worktree_path.display(),
+        "merge:worktree resolved"
+    );
 
     // Handle changes in the source worktree
     if git::has_unstaged_changes(&worktree_path)? && !ignore_uncommitted {
@@ -385,6 +471,7 @@ pub fn merge(
     let had_staged_changes = git::has_staged_changes(&worktree_path)?;
     if had_staged_changes && !ignore_uncommitted {
         // Commit using git's editor (respects $EDITOR or git config)
+        info!(path = %worktree_path.display(), "merge:committing staged changes");
         git::commit_with_editor(&worktree_path).context("Failed to commit staged changes")?;
     }
 
@@ -399,6 +486,11 @@ pub fn merge(
     if branch_to_merge == main_branch {
         return Err(anyhow!("Cannot merge the main branch into itself."));
     }
+    debug!(
+        branch = branch_to_merge,
+        main = &main_branch,
+        "merge:main branch resolved"
+    );
 
     // Get the main worktree path. This is the canonical, non-linked worktree.
     let main_worktree_path =
@@ -418,6 +510,11 @@ pub fn merge(
         // Rebase the feature branch on top of main inside its own worktree.
         // This is where conflicts will be detected.
         println!("Rebasing '{}' onto '{}'...", &branch_to_merge, &main_branch);
+        info!(
+            branch = branch_to_merge,
+            base = &main_branch,
+            "merge:rebase start"
+        );
         git::rebase_branch_onto_base(&worktree_path, &main_branch).with_context(|| {
             format!(
                 "Rebase failed, likely due to conflicts.\n\n\
@@ -430,6 +527,7 @@ pub fn merge(
         // After a successful rebase, merge into main. This will be a fast-forward.
         git::merge_in_worktree(&main_worktree_path, &branch_to_merge)
             .context("Failed to merge rebased branch. This should have been a fast-forward.")?;
+        info!(branch = branch_to_merge, "merge:fast-forward complete");
     } else if squash {
         // Perform the squash merge. This stages all changes from the feature branch but does not commit.
         git::merge_squash_in_worktree(&main_worktree_path, &branch_to_merge)
@@ -439,14 +537,20 @@ pub fn merge(
         println!("Staged squashed changes. Please provide a commit message in your editor.");
         git::commit_with_editor(&main_worktree_path)
             .context("Failed to commit squashed changes. You may need to commit them manually.")?;
+        info!(branch = branch_to_merge, "merge:squash merge committed");
     } else {
         // Default merge commit workflow
         git::merge_in_worktree(&main_worktree_path, &branch_to_merge)
             .context("Failed to merge branch")?;
+        info!(branch = branch_to_merge, "merge:standard merge complete");
     }
 
     // Always force cleanup after a successful merge
     let prefix = config.window_prefix();
+    info!(
+        branch = branch_to_merge,
+        delete_remote, "merge:cleanup start"
+    );
     cleanup(
         prefix,
         &branch_to_merge,
@@ -474,6 +578,7 @@ pub fn remove(
     delete_remote: bool,
     config: &config::Config,
 ) -> Result<RemoveResult> {
+    info!(branch = branch_name, force, delete_remote, "remove:start");
     if !git::is_git_repo()? {
         return Err(anyhow!("Not in a git repository"));
     }
@@ -481,6 +586,7 @@ pub fn remove(
     // Get worktree path - this also validates that the worktree exists
     let worktree_path = git::get_worktree_path(branch_name)
         .with_context(|| format!("No worktree found for branch '{}'", branch_name))?;
+    debug!(branch = branch_name, path = %worktree_path.display(), "remove:worktree resolved");
 
     // Safety Check: Prevent deleting the main branch
     let main_branch = git::get_default_branch()
@@ -498,6 +604,7 @@ pub fn remove(
     // Note: Unmerged branch check removed - git branch -d/D handles this natively
     // The CLI provides a user-friendly confirmation prompt before calling this function
     let prefix = config.window_prefix();
+    info!(branch = branch_name, delete_remote, "remove:cleanup start");
     cleanup(prefix, branch_name, &worktree_path, force, delete_remote)?;
 
     // Navigate to the main branch window if it exists
@@ -518,11 +625,19 @@ pub fn cleanup(
     force: bool,
     delete_remote: bool,
 ) -> Result<CleanupResult> {
+    info!(
+        branch = branch_name,
+        path = %worktree_path.display(),
+        force,
+        delete_remote,
+        "cleanup:start"
+    );
     // Change the CWD to a safe location (main worktree root) before any destructive
     // operations. This prevents "Unable to read current working directory" errors
     // when the command is run from within the worktree being deleted.
     let main_worktree_root = git::get_main_worktree_root()
         .context("Could not find main worktree to run cleanup operations")?;
+    debug!(root = %main_worktree_root.display(), "cleanup:main root resolved");
     std::env::set_current_dir(&main_worktree_root)
         .context("Could not change directory to main worktree root")?;
 
@@ -540,6 +655,7 @@ pub fn cleanup(
     {
         tmux::kill_window(prefix, branch_name).context("Failed to kill tmux window")?;
         result.tmux_window_killed = true;
+        info!(branch = branch_name, "cleanup:tmux window killed");
 
         // Poll to confirm the window is gone before proceeding. This prevents a race
         // condition where we try to delete the directory before the shell inside
@@ -558,6 +674,10 @@ pub fn cleanup(
         if !window_is_gone {
             // The window did not close in time. Proceeding may fail, but we let it
             // try. With logging, this warning will be critical for diagnosis.
+            warn!(
+                branch = branch_name,
+                "cleanup:tmux window did not close within retry budget"
+            );
             eprintln!(
                 "Warning: tmux window for '{}' did not close in the allotted time. \
                 Filesystem cleanup may fail.",
@@ -577,21 +697,30 @@ pub fn cleanup(
             )
         })?;
         result.worktree_removed = true;
+        info!(branch = branch_name, path = %worktree_path.display(), "cleanup:worktree directory removed");
     }
 
     // 3. Prune worktrees. This cleans up git's metadata by removing the reference
     // to the directory we just deleted. This must happen *after* directory removal.
     git::prune_worktrees().context("Failed to prune worktrees")?;
+    debug!("cleanup:git worktrees pruned");
 
     // 4. Delete the local branch.
     git::delete_branch(branch_name, force).context("Failed to delete local branch")?;
     result.local_branch_deleted = true;
+    info!(branch = branch_name, "cleanup:local branch deleted");
 
     // 5. Delete the remote branch if requested.
     if delete_remote {
         match git::delete_remote_branch(branch_name) {
-            Ok(_) => result.remote_branch_deleted = true,
-            Err(e) => result.remote_delete_error = Some(e.to_string()),
+            Ok(_) => {
+                result.remote_branch_deleted = true;
+                info!(branch = branch_name, "cleanup:remote branch deleted");
+            }
+            Err(e) => {
+                warn!(branch = branch_name, error = %e, "cleanup:failed to delete remote branch");
+                result.remote_delete_error = Some(e.to_string());
+            }
         }
     }
 

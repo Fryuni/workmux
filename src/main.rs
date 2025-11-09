@@ -3,11 +3,25 @@ mod cli;
 mod cmd;
 mod config;
 mod git;
+mod logger;
 mod tmux;
 mod workflow;
 
 use anyhow::Result;
+use tracing::{error, info};
 
 fn main() -> Result<()> {
-    cli::run()
+    logger::init()?;
+    info!(args = ?std::env::args().collect::<Vec<_>>(), "workmux start");
+
+    match cli::run() {
+        Ok(result) => {
+            info!("workmux finished successfully");
+            Ok(result)
+        }
+        Err(err) => {
+            error!(error = ?err, "workmux failed");
+            Err(err)
+        }
+    }
 }

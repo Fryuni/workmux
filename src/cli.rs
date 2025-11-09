@@ -1,7 +1,7 @@
 use crate::{claude, config, git, workflow};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::io::{self, Write};
 
 #[derive(Clone, Debug)]
@@ -317,12 +317,12 @@ fn remove_worktree(branch_name: Option<&str>, mut force: bool, delete_remote: bo
     if !force {
         // First check for uncommitted changes (must be checked before unmerged prompt)
         // to avoid prompting user about unmerged commits only to error on uncommitted changes
-        if let Ok(worktree_path) = git::get_worktree_path(&branch_to_remove) {
-            if git::has_uncommitted_changes(&worktree_path)? {
-                return Err(anyhow!(
-                    "Worktree has uncommitted changes. Use --force to delete anyway."
-                ));
-            }
+        if let Ok(worktree_path) = git::get_worktree_path(&branch_to_remove)
+            && git::has_uncommitted_changes(&worktree_path)?
+        {
+            return Err(anyhow!(
+                "Worktree has uncommitted changes. Use --force to delete anyway."
+            ));
         }
 
         // Check if we need to prompt for unmerged commits

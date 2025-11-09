@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -49,10 +49,9 @@ pub fn get_default_branch() -> Result<String> {
     if let Ok(ref_name) = Cmd::new("git")
         .args(&["symbolic-ref", "refs/remotes/origin/HEAD"])
         .run_and_capture_stdout()
+        && let Some(branch) = ref_name.strip_prefix("refs/remotes/origin/")
     {
-        if let Some(branch) = ref_name.strip_prefix("refs/remotes/origin/") {
-            return Ok(branch.to_string());
-        }
+        return Ok(branch.to_string());
     }
 
     // Fallback: check if main or master exists locally
@@ -254,10 +253,9 @@ pub fn get_merge_base(main_branch: &str) -> Result<String> {
     if let Ok(upstream) = Cmd::new("git")
         .args(&["rev-parse", "--abbrev-ref", &upstream_arg])
         .run_and_capture_stdout()
+        && !upstream.is_empty()
     {
-        if !upstream.is_empty() {
-            return Ok(upstream);
-        }
+        return Ok(upstream);
     }
 
     // Fallback: check if origin/<main_branch> exists

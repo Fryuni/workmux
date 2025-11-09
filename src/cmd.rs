@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::Path;
 use std::process::{Command, Output};
+use tracing::{debug, trace};
 
 /// A builder for executing shell commands with unified error handling
 pub struct Cmd<'a> {
@@ -40,27 +41,40 @@ impl<'a> Cmd<'a> {
     /// Execute the command and return the output
     /// Returns an error if the command fails (non-zero exit code)
     pub fn run(self) -> Result<Output> {
-        let mut cmd = Command::new(self.command);
-        if let Some(dir) = self.workdir {
+        let Cmd {
+            command,
+            args,
+            workdir,
+        } = self;
+        let workdir_display = workdir.map(|p| p.display().to_string());
+
+        trace!(command, args = ?args, workdir = ?workdir_display, "cmd:run start");
+
+        let mut cmd = Command::new(command);
+        if let Some(dir) = workdir {
             cmd.current_dir(dir);
         }
-        let output = cmd.args(&self.args).output().with_context(|| {
-            format!(
-                "Failed to execute command: {} {}",
-                self.command,
-                self.args.join(" ")
-            )
+        let output = cmd.args(&args).output().with_context(|| {
+            format!("Failed to execute command: {} {}", command, args.join(" "))
         })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            debug!(
+                command,
+                args = ?args,
+                status = ?output.status.code(),
+                stderr = %stderr.trim(),
+                "cmd:run failure"
+            );
             return Err(anyhow!(
                 "Command failed: {} {}\n{}",
-                self.command,
-                self.args.join(" "),
+                command,
+                args.join(" "),
                 stderr.trim()
             ));
         }
+        trace!(command, "cmd:run success");
         Ok(output)
     }
 
@@ -73,19 +87,25 @@ impl<'a> Cmd<'a> {
     /// Execute the command, returning Ok(true) if it succeeds, Ok(false) if it fails
     /// This is useful for commands that are used as checks (e.g., git rev-parse --verify)
     pub fn run_as_check(self) -> Result<bool> {
-        let mut cmd = Command::new(self.command);
-        if let Some(dir) = self.workdir {
+        let Cmd {
+            command,
+            args,
+            workdir,
+        } = self;
+        let workdir_display = workdir.map(|p| p.display().to_string());
+        trace!(command, args = ?args, workdir = ?workdir_display, "cmd:check start");
+
+        let mut cmd = Command::new(command);
+        if let Some(dir) = workdir {
             cmd.current_dir(dir);
         }
-        let output = cmd.args(&self.args).output().with_context(|| {
-            format!(
-                "Failed to execute command: {} {}",
-                self.command,
-                self.args.join(" ")
-            )
+        let output = cmd.args(&args).output().with_context(|| {
+            format!("Failed to execute command: {} {}", command, args.join(" "))
         })?;
 
-        Ok(output.status.success())
+        let success = output.status.success();
+        trace!(command, success, "cmd:check result");
+        Ok(success)
     }
 }
 
