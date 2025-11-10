@@ -1,9 +1,18 @@
-# workmux
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="meta/logo-dark.svg">
+    <img src="meta/logo.svg" alt="workmux icon" width="300">
+  </picture>
+</p>
 
-**Git worktrees + tmux windows**
+<p align="center">
+  <strong>Git worktrees + tmux windows</strong>
+</p>
 
-Giga opinionated zero-friction workflow tool that orchestrates git worktrees and
-tmux windows to create isolated development environments.
+---
+
+Giga opinionated zero-friction workflow tool for managing git worktrees and
+tmux windows as isolated development environments.
 
 Perfect for running multiple AI agents in parallel without conflict.
 
