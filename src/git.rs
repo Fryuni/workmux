@@ -129,11 +129,28 @@ pub fn create_worktree(
 
 /// Unset the upstream tracking for a branch
 pub fn unset_branch_upstream(branch_name: &str) -> Result<()> {
+    if !branch_has_upstream(branch_name)? {
+        return Ok(());
+    }
+
     Cmd::new("git")
         .args(&["branch", "--unset-upstream", branch_name])
         .run()
         .context("Failed to unset branch upstream")?;
     Ok(())
+}
+
+fn branch_has_upstream(branch_name: &str) -> Result<bool> {
+    // Ask git to resolve <branch>@{upstream}; success means an upstream exists.
+    let upstream_ref = format!("{branch_name}@{{upstream}}");
+    Cmd::new("git")
+        .args(&[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            &upstream_ref,
+        ])
+        .run_as_check()
 }
 
 /// Prune stale worktree metadata
