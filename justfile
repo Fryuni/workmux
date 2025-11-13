@@ -35,13 +35,13 @@ build:
 run *ARGS:
     cargo run -- "$@"
 
-# Run Python tests (depends on build)
+# Run Python tests in parallel (depends on build)
 test *ARGS: build
     #!/usr/bin/env bash
     set -euo pipefail
     source tests/venv/bin/activate
     if [ $# -eq 0 ]; then
-        pytest tests/ -v
+        pytest tests/ -v -n 4
     else
         pytest "$@"
     fi
