@@ -95,6 +95,31 @@ def test_add_executes_pane_commands(
     )
 
 
+def test_add_copies_directories(
+    isolated_tmux_server: TmuxEnvironment, workmux_exe_path: Path, repo_path: Path
+):
+    """Verifies that directory copy rules replicate nested contents into the worktree."""
+    env = isolated_tmux_server
+    branch_name = "feature-copy-dir"
+    shared_dir = repo_path / "shared-config"
+    nested_dir = shared_dir / "nested"
+
+    nested_dir.mkdir(parents=True)
+    (shared_dir / "root.txt").write_text("root-level")
+    (nested_dir / "child.txt").write_text("nested-level")
+
+    write_workmux_config(repo_path, files={"copy": ["shared-config"]})
+
+    run_workmux_add(env, workmux_exe_path, repo_path, branch_name)
+
+    worktree_path = get_worktree_path(repo_path, branch_name)
+    copied_dir = worktree_path / "shared-config"
+
+    assert copied_dir.is_dir()
+    assert (copied_dir / "root.txt").read_text() == "root-level"
+    assert (copied_dir / "nested" / "child.txt").read_text() == "nested-level"
+
+
 def test_add_sources_shell_rc_files(
     isolated_tmux_server: TmuxEnvironment, workmux_exe_path: Path, repo_path: Path
 ):
