@@ -5,6 +5,12 @@ use std::process::Command;
 
 use crate::cmd::Cmd;
 
+#[derive(Debug, Clone)]
+pub struct RemoteBranchSpec {
+    pub remote: String,
+    pub branch: String,
+}
+
 /// Custom error type for worktree not found
 #[derive(Debug, thiserror::Error)]
 #[error("Worktree not found for branch: {0}")]
@@ -77,6 +83,54 @@ pub fn branch_exists(branch_name: &str) -> Result<bool> {
         .run_as_check()
 }
 
+/// Parse a remote branch specification in the form "<remote>/<branch>"
+pub fn parse_remote_branch_spec(spec: &str) -> Result<RemoteBranchSpec> {
+    let mut parts = spec.splitn(2, '/');
+    let remote = parts.next().unwrap_or("").trim();
+    let branch = parts.next().unwrap_or("").trim();
+
+    if remote.is_empty() || branch.is_empty() {
+        return Err(anyhow!(
+            "Invalid remote branch '{}'. Use the format <remote>/<branch> (e.g., origin/feature/foo).",
+            spec
+        ));
+    }
+
+    Ok(RemoteBranchSpec {
+        remote: remote.to_string(),
+        branch: branch.to_string(),
+    })
+}
+
+/// Return a list of configured git remotes
+pub fn list_remotes() -> Result<Vec<String>> {
+    let output = Cmd::new("git")
+        .arg("remote")
+        .run_and_capture_stdout()
+        .context("Failed to list git remotes")?;
+
+    Ok(output
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_string())
+        .collect())
+}
+
+/// Check if a remote exists
+pub fn remote_exists(remote: &str) -> Result<bool> {
+    Ok(list_remotes()?.into_iter().any(|name| name == remote))
+}
+
+/// Fetch updates from the given remote
+pub fn fetch_remote(remote: &str) -> Result<()> {
+    Cmd::new("git")
+        .args(&["fetch", remote])
+        .run()
+        .with_context(|| format!("Failed to fetch from remote '{}'", remote))?;
+    Ok(())
+}
+
 /// Check if a worktree already exists for a branch
 pub fn worktree_exists(branch_name: &str) -> Result<bool> {
     match get_worktree_path(branch_name) {
@@ -98,6 +152,7 @@ pub fn create_worktree(
     branch_name: &str,
     create_branch: bool,
     base_branch: Option<&str>,
+    track_upstream: bool,
 ) -> Result<()> {
     let path_str = worktree_path
         .to_str()
@@ -117,10 +172,10 @@ pub fn create_worktree(
     cmd.run().context("Failed to create worktree")?;
 
     // When creating a new branch from a remote tracking branch (e.g., origin/main),
-    // git automatically sets up tracking for the new branch. This means the new branch
-    // would track origin/main instead of being independent. Unset this to prevent
-    // inheriting the upstream configuration.
-    if create_branch {
+    // git automatically sets up tracking for the new branch. This is desirable when
+    // opening a remote branch locally, but we unset the upstream when the new branch
+    // should be independent.
+    if create_branch && !track_upstream {
         unset_branch_upstream(branch_name)?;
     }
 

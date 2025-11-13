@@ -227,6 +227,10 @@ immediately. If the branch doesn't exist, it will be created automatically.
 - `-c, --from-current`: Use your currently checked out branch as the base. This is a
   shorthand for passing that branch explicitly via `--base` and is helpful when
   stacking feature branches.
+- `--remote <remote/branch>`: Fetch and create a worktree from an existing remote
+  branch (e.g., `origin/feature/foo`). When you omit `<branch-name>`, workmux
+  automatically names the local branch after the remote branch. Provide a
+  `<branch-name>` if you want a different local name.
 
 **What happens:**
 
@@ -256,6 +260,12 @@ workmux add hotfix --base production
 
 # Use the current branch as the base (stacked branch)
 workmux add feature-2 --from-current
+
+# Fetch a remote PR branch into a local worktree
+workmux add --remote origin/user-auth-pr
+
+# Fetch a remote branch but keep a custom local name
+workmux add user-auth-testing --remote origin/user-auth-pr
 ```
 
 ---

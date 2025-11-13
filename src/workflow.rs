@@ -51,9 +51,15 @@ struct SetupOptions {
 pub fn create(
     branch_name: &str,
     base_branch: Option<&str>,
+    remote_branch: Option<&str>,
     config: &config::Config,
 ) -> Result<CreateResult> {
-    info!(branch = branch_name, base = ?base_branch, "create:start");
+    info!(
+        branch = branch_name,
+        base = ?base_branch,
+        remote = ?remote_branch,
+        "create:start"
+    );
 
     // Validate pane config before any other operations
     if let Some(panes) = &config.panes {
@@ -89,14 +95,41 @@ pub fn create(
 
     // Auto-detect: create branch if it doesn't exist
     let branch_exists = git::branch_exists(branch_name)?;
+    if branch_exists && remote_branch.is_some() {
+        return Err(anyhow!(
+            "Branch '{}' already exists. Remove '--remote' or pick a different branch name.",
+            branch_name
+        ));
+    }
     let create_new = !branch_exists;
+    let mut track_upstream = false;
     debug!(
         branch = branch_name,
         branch_exists, create_new, "create:branch detection"
     );
 
     // Determine the base for the new branch
-    let base_branch_for_creation = if create_new {
+    let base_branch_for_creation = if let Some(remote_spec) = remote_branch {
+        let spec = git::parse_remote_branch_spec(remote_spec)?;
+        if !git::remote_exists(&spec.remote)? {
+            return Err(anyhow!(
+                "Remote '{}' does not exist. Available remotes: {:?}",
+                spec.remote,
+                git::list_remotes()?
+            ));
+        }
+        git::fetch_remote(&spec.remote)
+            .with_context(|| format!("Failed to fetch from remote '{}'", spec.remote))?;
+        let remote_ref = format!("{}/{}", spec.remote, spec.branch);
+        if !git::branch_exists(&remote_ref)? {
+            return Err(anyhow!(
+                "Remote branch '{}' was not found. Double-check the name or fetch it manually.",
+                remote_ref
+            ));
+        }
+        track_upstream = true;
+        Some(remote_ref)
+    } else if create_new {
         if let Some(base) = base_branch {
             // Use the explicitly provided base branch/commit/tag
             Some(base.to_string())
@@ -154,6 +187,7 @@ pub fn create(
         branch_name,
         create_new,
         base_branch_for_creation.as_deref(),
+        track_upstream,
     )
     .context("Failed to create git worktree")?;
 

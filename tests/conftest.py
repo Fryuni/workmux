@@ -166,10 +166,13 @@ def repo_path(isolated_tmux_server: "TmuxEnvironment") -> Path:
 @pytest.fixture
 def remote_repo_path(isolated_tmux_server: "TmuxEnvironment") -> Path:
     """Creates a bare git repo to act as a remote."""
-    remote_path = isolated_tmux_server.tmp_path / "remote_repo.git"
-    remote_path.mkdir()
+    parent = isolated_tmux_server.tmp_path.parent
+    remote_path = Path(tempfile.mkdtemp(prefix="remote_repo_", dir=parent))
     subprocess.run(
-        ["git", "init", "--bare"], cwd=remote_path, check=True, capture_output=True
+        ["git", "init", "--bare"],
+        cwd=remote_path,
+        check=True,
+        capture_output=True,
     )
     return remote_path
 

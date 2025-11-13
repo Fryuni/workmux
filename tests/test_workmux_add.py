@@ -491,9 +491,9 @@ def test_add_reuses_existing_branch(
     # Create and populate an existing branch
     env.run_command(["git", "checkout", "-b", branch_name], cwd=repo_path)
     create_commit(env, repo_path, commit_message)
-    branch_head = (
-        env.run_command(["git", "rev-parse", "HEAD"], cwd=repo_path).stdout.strip()
-    )
+    branch_head = env.run_command(
+        ["git", "rev-parse", "HEAD"], cwd=repo_path
+    ).stdout.strip()
 
     # Switch back to the default branch so workmux add runs from a typical state
     env.run_command(["git", "checkout", default_branch], cwd=repo_path)
@@ -502,16 +502,151 @@ def test_add_reuses_existing_branch(
 
     worktree_path = get_worktree_path(repo_path, branch_name)
     expected_file = (
-        worktree_path / f"file_for_{commit_message.replace(' ', '_').replace(':', '')}.txt"
+        worktree_path
+        / f"file_for_{commit_message.replace(' ', '_').replace(':', '')}.txt"
     )
     assert expected_file.exists()
     assert expected_file.read_text() == f"content for {commit_message}"
 
     # The branch should still point to the commit we created earlier
-    branch_tip = (
-        env.run_command(["git", "rev-parse", branch_name], cwd=repo_path).stdout.strip()
-    )
+    branch_tip = env.run_command(
+        ["git", "rev-parse", branch_name], cwd=repo_path
+    ).stdout.strip()
     assert branch_tip == branch_head
+
+
+def test_add_from_remote_branch(
+    isolated_tmux_server: TmuxEnvironment,
+    workmux_exe_path: Path,
+    repo_path: Path,
+    remote_repo_path: Path,
+):
+    """When the branch exists only on the remote, workmux add should fetch and track it."""
+    env = isolated_tmux_server
+    remote_branch_path = "feature/remote-pr"
+    remote_ref = f"origin/{remote_branch_path}"
+    commit_message = "Remote PR work"
+
+    write_workmux_config(repo_path)
+
+    # Wire up the repo to a bare remote and push the default branch.
+    env.run_command(
+        ["git", "remote", "add", "origin", str(remote_repo_path)], cwd=repo_path
+    )
+    env.run_command(["git", "push", "-u", "origin", "main"], cwd=repo_path)
+
+    # Create a branch with commits and push it to the remote.
+    env.run_command(["git", "checkout", "-b", remote_branch_path], cwd=repo_path)
+    create_commit(env, repo_path, commit_message)
+    remote_tip = env.run_command(
+        ["git", "rev-parse", remote_branch_path], cwd=repo_path
+    ).stdout.strip()
+    env.run_command(["git", "push", "-u", "origin", remote_branch_path], cwd=repo_path)
+
+    # Remove the local branch and remote-tracking ref so the branch only exists on the remote.
+    env.run_command(["git", "checkout", "main"], cwd=repo_path)
+    env.run_command(["git", "branch", "-D", remote_branch_path], cwd=repo_path)
+    env.run_command(
+        ["git", "update-ref", "-d", f"refs/remotes/{remote_ref}"],
+        cwd=repo_path,
+    )
+
+    run_workmux_command(
+        env,
+        workmux_exe_path,
+        repo_path,
+        f"add --remote {remote_ref}",
+    )
+
+    worktree_path = get_worktree_path(repo_path, remote_branch_path)
+    expected_file = (
+        worktree_path
+        / f"file_for_{commit_message.replace(' ', '_').replace(':', '')}.txt"
+    )
+    assert expected_file.exists()
+    assert expected_file.read_text() == f"content for {commit_message}"
+
+    # Local branch should point to the remote commit and track origin/<branch_name>.
+    branch_tip = env.run_command(
+        ["git", "rev-parse", remote_branch_path], cwd=repo_path
+    ).stdout.strip()
+    assert branch_tip == remote_tip
+
+    upstream_tip = env.run_command(
+        ["git", "rev-parse", f"{remote_branch_path}@{{upstream}}"], cwd=repo_path
+    ).stdout.strip()
+    assert upstream_tip == remote_tip
+
+    origin_tip = env.run_command(
+        ["git", "rev-parse", remote_ref], cwd=repo_path
+    ).stdout.strip()
+    assert origin_tip == remote_tip
+
+
+def test_add_from_remote_branch_with_custom_name(
+    isolated_tmux_server: TmuxEnvironment,
+    workmux_exe_path: Path,
+    repo_path: Path,
+    remote_repo_path: Path,
+):
+    """`workmux add foo --remote origin/bar` should keep foo as the local branch name."""
+    env = isolated_tmux_server
+    remote_branch_path = "feature/custom-remote"
+    remote_ref = f"origin/{remote_branch_path}"
+    local_branch = "custom-local-name"
+    commit_message = "Remote PR custom work"
+
+    write_workmux_config(repo_path)
+
+    env.run_command(
+        ["git", "remote", "add", "origin", str(remote_repo_path)], cwd=repo_path
+    )
+    env.run_command(["git", "push", "-u", "origin", "main"], cwd=repo_path)
+
+    env.run_command(["git", "checkout", "-b", remote_branch_path], cwd=repo_path)
+    create_commit(env, repo_path, commit_message)
+    remote_tip = env.run_command(
+        ["git", "rev-parse", remote_branch_path], cwd=repo_path
+    ).stdout.strip()
+    env.run_command(["git", "push", "-u", "origin", remote_branch_path], cwd=repo_path)
+
+    env.run_command(["git", "checkout", "main"], cwd=repo_path)
+    env.run_command(["git", "branch", "-D", remote_branch_path], cwd=repo_path)
+    env.run_command(
+        ["git", "update-ref", "-d", f"refs/remotes/{remote_ref}"],
+        cwd=repo_path,
+    )
+
+    run_workmux_command(
+        env,
+        workmux_exe_path,
+        repo_path,
+        f"add {local_branch} --remote {remote_ref}",
+    )
+
+    worktree_path = get_worktree_path(repo_path, local_branch)
+    expected_file = (
+        worktree_path
+        / f"file_for_{commit_message.replace(' ', '_').replace(':', '')}.txt"
+    )
+    assert expected_file.exists()
+    assert expected_file.read_text() == f"content for {commit_message}"
+
+    # Verify the local branch and upstream tracking.
+    branch_tip = env.run_command(
+        ["git", "rev-parse", local_branch], cwd=repo_path
+    ).stdout.strip()
+    assert branch_tip == remote_tip
+
+    upstream_tip = env.run_command(
+        ["git", "rev-parse", f"{local_branch}@{{upstream}}"], cwd=repo_path
+    ).stdout.strip()
+    assert upstream_tip == remote_tip
+
+    origin_tip = env.run_command(
+        ["git", "rev-parse", remote_ref], cwd=repo_path
+    ).stdout.strip()
+    assert origin_tip == remote_tip
 
 
 def test_add_fails_when_worktree_exists(
