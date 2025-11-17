@@ -10,3 +10,4 @@ post_create:
 files:
   symlink:
     - CLAUDE.md
+    - target
