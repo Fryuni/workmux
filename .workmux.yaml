@@ -8,5 +8,3 @@ files:
   symlink:
     - CLAUDE.md
     - tests/venv # Share Python venv for faster worktree creation
-
-merge_strategy: rebase
